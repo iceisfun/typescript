@@ -30,6 +30,12 @@ type Options struct {
 	Target   core.ScriptTarget // ECMAScript output level; defaults to ESNext
 	Module   core.ModuleKind   // module system for import/export; defaults to ESNext (preserve-ish)
 	JSX      bool              // parse as .tsx
+
+	// IgnoreSyntaxErrors makes transpilation permissive: parse diagnostics are
+	// not reported as an error and the (error-recovered) input is transpiled
+	// anyway, matching TypeScript's ts.transpileModule. The default is strict —
+	// malformed input is rejected — which is safer when the output will be run.
+	IgnoreSyntaxErrors bool
 }
 
 // Module transpiles a single TypeScript module's source to JavaScript. It runs
@@ -82,8 +88,10 @@ func transpile(src string, o Options, withMap bool) (string, *sourcemap.RawSourc
 	// The parser is error-tolerant: it recovers from syntax errors and still
 	// produces an AST. Surface those diagnostics as an error instead of silently
 	// transpiling malformed input.
-	if diags := sourceFile.Diagnostics(); len(diags) > 0 {
-		return "", nil, syntaxError(sourceFile, o.FileName, diags)
+	if !o.IgnoreSyntaxErrors {
+		if diags := sourceFile.Diagnostics(); len(diags) > 0 {
+			return "", nil, syntaxError(sourceFile, o.FileName, diags)
+		}
 	}
 	// Bind the file so the reference resolver has a symbol table: the module and
 	// runtime-syntax transforms rely on binder symbols to rewrite import
