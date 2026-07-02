@@ -63,6 +63,10 @@ func Module(src string, o Options) (string, error) {
 		Path:     tspath.Path(o.FileName),
 	}
 	sourceFile := parser.ParseSourceFile(parseOpts, src, scriptKind)
+	// Bind the file so the reference resolver has a symbol table: the module and
+	// runtime-syntax transforms rely on binder symbols to rewrite import
+	// references (import { add } -> ns_1.add) and enum/namespace members.
+	binder.BindSourceFile(sourceFile)
 
 	host := &emitHost{options: options, files: []*ast.SourceFile{sourceFile}}
 	emitContext, put := printer.GetEmitContext()

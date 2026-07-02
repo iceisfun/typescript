@@ -15,6 +15,7 @@ func TestSmoke(t *testing.T) {
 		{"class", "class C {\n  private n: number = 3;\n  greet(name: string): string { return `hi ${name}`; }\n}\n", "class C"},
 		{"arrow", "const y = (a: number, b: number): number => a + b;\n", "a + b"},
 		{"generics", "function id<T>(v: T): T { return v; }\n", "function id(v) { return v; }"},
+		{"import-rewrite", "import { add } from './m';\nexport const r = add(1, 2);\n", "m_1.add"},
 	}
 	for _, c := range cases {
 		js, err := Module(c.src, Options{})
