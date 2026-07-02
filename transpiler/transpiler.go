@@ -7,11 +7,14 @@
 package transpiler
 
 import (
+	"errors"
+	"fmt"
 	"github.com/iceisfun/typescript/ast"
 	"github.com/iceisfun/typescript/binder"
 	"github.com/iceisfun/typescript/core"
 	"github.com/iceisfun/typescript/parser"
 	"github.com/iceisfun/typescript/printer"
+	"github.com/iceisfun/typescript/scanner"
 	"github.com/iceisfun/typescript/sourcemap"
 	"github.com/iceisfun/typescript/transformers"
 	"github.com/iceisfun/typescript/transformers/estransforms"
@@ -23,7 +26,7 @@ import (
 
 // Options controls a single transpilation.
 type Options struct {
-	FileName string           // source name for diagnostics/sourcemaps; defaults to "module.ts"
+	FileName string            // source name for diagnostics/sourcemaps; defaults to "module.ts"
 	Target   core.ScriptTarget // ECMAScript output level; defaults to ESNext
 	Module   core.ModuleKind   // module system for import/export; defaults to ESNext (preserve-ish)
 	JSX      bool              // parse as .tsx
@@ -76,6 +79,12 @@ func transpile(src string, o Options, withMap bool) (string, *sourcemap.RawSourc
 		Path:     tspath.Path(o.FileName),
 	}
 	sourceFile := parser.ParseSourceFile(parseOpts, src, scriptKind)
+	// The parser is error-tolerant: it recovers from syntax errors and still
+	// produces an AST. Surface those diagnostics as an error instead of silently
+	// transpiling malformed input.
+	if diags := sourceFile.Diagnostics(); len(diags) > 0 {
+		return "", nil, syntaxError(sourceFile, o.FileName, diags)
+	}
 	// Bind the file so the reference resolver has a symbol table: the module and
 	// runtime-syntax transforms rely on binder symbols to rewrite import
 	// references (import { add } -> ns_1.add) and enum/namespace members.
@@ -103,13 +112,25 @@ func transpile(src string, o Options, withMap bool) (string, *sourcemap.RawSourc
 	// to the text writer and records generated->original position mappings.
 	gen := sourcemap.NewGenerator(
 		tspath.GetBaseFileName(o.FileName)+".js", // generated file name
-		"", // sourceRoot
+		"",  // sourceRoot
 		"/", // sources directory
 		tspath.ComparePathsOptions{UseCaseSensitiveFileNames: true, CurrentDirectory: "/"},
 	)
 	writer := printer.NewTextWriter("\n", 0)
 	p.Write(sourceFile.AsNode(), sourceFile, writer, gen)
 	return writer.String(), gen.RawSourceMap(), nil
+}
+
+// syntaxError formats the first parse diagnostic as an error with a
+// file:line:column prefix. Positions are 1-based.
+func syntaxError(sf *ast.SourceFile, fileName string, diags []*ast.Diagnostic) error {
+	d := diags[0]
+	line, col := scanner.GetECMALineAndUTF16CharacterOfPosition(sf, d.Pos())
+	msg := fmt.Sprintf("%s:%d:%d: %s", fileName, line+1, int(col)+1, d.String())
+	if n := len(diags); n > 1 {
+		msg += fmt.Sprintf(" (and %d more)", n-1)
+	}
+	return errors.New(msg)
 }
 
 // scriptTransformers is the checker-free subset of the compiler's
@@ -127,9 +148,9 @@ func scriptTransformers(emitContext *printer.EmitContext, host printer.EmitHost,
 	}
 
 	var tx []*transformers.Transformer
-	tx = append(tx, tstransforms.NewTypeEraserTransformer(&opts))                 // erase types
-	tx = append(tx, tstransforms.NewRuntimeSyntaxTransformer(&opts))              // enum/namespace/param-props
-	if downleveler := estransforms.GetESTransformer(&opts); downleveler != nil {  // downlevel to Target
+	tx = append(tx, tstransforms.NewTypeEraserTransformer(&opts))                // erase types
+	tx = append(tx, tstransforms.NewRuntimeSyntaxTransformer(&opts))             // enum/namespace/param-props
+	if downleveler := estransforms.GetESTransformer(&opts); downleveler != nil { // downlevel to Target
 		tx = append(tx, downleveler)
 	}
 	tx = append(tx, estransforms.NewUseStrictTransformer(&opts))
@@ -158,16 +179,18 @@ type emitHost struct {
 	resolver *emitResolver
 }
 
-func (h *emitHost) Options() *core.CompilerOptions                            { return h.options }
-func (h *emitHost) SourceFiles() []*ast.SourceFile                           { return h.files }
-func (h *emitHost) UseCaseSensitiveFileNames() bool                          { return true }
-func (h *emitHost) GetCurrentDirectory() string                             { return "/" }
-func (h *emitHost) CommonSourceDirectory() string                          { return "/" }
-func (h *emitHost) IsEmitBlocked(string) bool                              { return false }
-func (h *emitHost) WriteFile(string, string) error                         { return nil }
-func (h *emitHost) GetEmitModuleFormatOfFile(ast.HasFileName) core.ModuleKind { return h.options.GetEmitModuleKind() }
-func (h *emitHost) GetEmitResolver() printer.EmitResolver                    { return h.resolver }
-func (h *emitHost) IsSourceFileFromExternalLibrary(*ast.SourceFile) bool     { return false }
+func (h *emitHost) Options() *core.CompilerOptions  { return h.options }
+func (h *emitHost) SourceFiles() []*ast.SourceFile  { return h.files }
+func (h *emitHost) UseCaseSensitiveFileNames() bool { return true }
+func (h *emitHost) GetCurrentDirectory() string     { return "/" }
+func (h *emitHost) CommonSourceDirectory() string   { return "/" }
+func (h *emitHost) IsEmitBlocked(string) bool       { return false }
+func (h *emitHost) WriteFile(string, string) error  { return nil }
+func (h *emitHost) GetEmitModuleFormatOfFile(ast.HasFileName) core.ModuleKind {
+	return h.options.GetEmitModuleKind()
+}
+func (h *emitHost) GetEmitResolver() printer.EmitResolver                { return h.resolver }
+func (h *emitHost) IsSourceFileFromExternalLibrary(*ast.SourceFile) bool { return false }
 func (h *emitHost) GetProjectReferenceFromSource(tspath.Path) *tsoptions.SourceOutputAndProjectReference {
 	return nil
 }

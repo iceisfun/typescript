@@ -82,3 +82,15 @@ func TestSourceMap(t *testing.T) {
 		t.Fatalf("bad source map: %+v", m)
 	}
 }
+
+// TestSyntaxError checks that malformed TypeScript is rejected with a
+// file:line:column error rather than silently transpiled.
+func TestSyntaxError(t *testing.T) {
+	_, err := Module("const x = 1;\n,bad!!!\n", Options{FileName: "app.ts"})
+	if err == nil {
+		t.Fatal("expected a syntax error")
+	}
+	if !strings.Contains(err.Error(), "app.ts:2") {
+		t.Fatalf("want app.ts:2 position, got: %v", err)
+	}
+}
