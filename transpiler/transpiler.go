@@ -68,7 +68,7 @@ func Module(src string, o Options) (string, error) {
 	// references (import { add } -> ns_1.add) and enum/namespace members.
 	binder.BindSourceFile(sourceFile)
 
-	host := &emitHost{options: options, files: []*ast.SourceFile{sourceFile}}
+	host := &emitHost{options: options, files: []*ast.SourceFile{sourceFile}, resolver: newEmitResolver()}
 	emitContext, put := printer.GetEmitContext()
 	defer put()
 
@@ -124,8 +124,9 @@ func moduleTransformer(opts *transformers.TransformOptions) *transformers.Transf
 // inert values; GetEmitResolver returns nil because the isolatedModules pipeline
 // never dereferences it.
 type emitHost struct {
-	options *core.CompilerOptions
-	files   []*ast.SourceFile
+	options  *core.CompilerOptions
+	files    []*ast.SourceFile
+	resolver *emitResolver
 }
 
 func (h *emitHost) Options() *core.CompilerOptions                            { return h.options }
@@ -136,7 +137,7 @@ func (h *emitHost) CommonSourceDirectory() string                          { ret
 func (h *emitHost) IsEmitBlocked(string) bool                              { return false }
 func (h *emitHost) WriteFile(string, string) error                         { return nil }
 func (h *emitHost) GetEmitModuleFormatOfFile(ast.HasFileName) core.ModuleKind { return h.options.GetEmitModuleKind() }
-func (h *emitHost) GetEmitResolver() printer.EmitResolver                    { return nil }
+func (h *emitHost) GetEmitResolver() printer.EmitResolver                    { return h.resolver }
 func (h *emitHost) IsSourceFileFromExternalLibrary(*ast.SourceFile) bool     { return false }
 func (h *emitHost) GetProjectReferenceFromSource(tspath.Path) *tsoptions.SourceOutputAndProjectReference {
 	return nil

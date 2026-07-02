@@ -43,3 +43,26 @@ func TestCommonJSImports(t *testing.T) {
 		t.Fatalf("import not lowered to require+qualified ref:\n%s", js)
 	}
 }
+
+// TestEnums checks that enum/namespace lowering works (via the checker-free
+// EmitResolver): auto-increment, explicit values, string members, cross-member
+// arithmetic/bitwise references, and namespaces.
+func TestEnums(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"auto-increment", "enum C { Red, Green, Blue }", `C["Blue"] = 2`},
+		{"continued-auto", "enum E { A = 1, B, C }", `E["C"] = 3`},
+		{"string", `enum S { A = "a" }`, `S["A"] = "a"`},
+		{"bitwise-ref", "enum F { A = 1 << 0, B = 1 << 1, C = A | B }", `F["C"] = 3`},
+		{"namespace", "namespace N { export const x = 1; }", "N.x = 1"},
+	}
+	for _, c := range cases {
+		js, err := Module(c.src+"\n", Options{})
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		if !strings.Contains(js, c.want) {
+			t.Errorf("%s: want %q in:\n%s", c.name, c.want, js)
+		}
+	}
+}
