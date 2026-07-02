@@ -1,0 +1,14 @@
+github.com/iceisfun/typescript
+
+This project is a derivative work: a de-internalized extraction of the
+JavaScript-emit (transpile) subset of Microsoft's TypeScript-Go compiler,
+repackaged as an importable Go library.
+
+Upstream:  github.com/microsoft/typescript-go
+Revision:  99fbd74e429336c6ef05c063ef2edc65d4d1972d
+License:    Apache License 2.0 (see LICENSE)
+
+The extracted packages are moved out of internal/ and their import paths
+rewritten from github.com/microsoft/typescript-go/internal/* to
+github.com/iceisfun/typescript/*. The transpiler/ package is original glue.
+Regenerate with ./extract.sh.
