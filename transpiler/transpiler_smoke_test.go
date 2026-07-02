@@ -3,6 +3,8 @@ package transpiler
 import (
 	"strings"
 	"testing"
+
+	"github.com/iceisfun/typescript/core"
 )
 
 // TestSmoke covers the checker-free type-stripping path that works today.
@@ -15,7 +17,6 @@ func TestSmoke(t *testing.T) {
 		{"class", "class C {\n  private n: number = 3;\n  greet(name: string): string { return `hi ${name}`; }\n}\n", "class C"},
 		{"arrow", "const y = (a: number, b: number): number => a + b;\n", "a + b"},
 		{"generics", "function id<T>(v: T): T { return v; }\n", "function id(v) { return v; }"},
-		{"import-rewrite", "import { add } from './m';\nexport const r = add(1, 2);\n", "m_1.add"},
 	}
 	for _, c := range cases {
 		js, err := Module(c.src, Options{})
@@ -27,5 +28,18 @@ func TestSmoke(t *testing.T) {
 			t.Errorf("%s: want substring %q in:\n%s", c.name, c.want, js)
 		}
 		t.Logf("[%s]\n%s=>\n%s", c.name, c.src, js)
+	}
+}
+
+// TestCommonJSImports checks that binding is wired so import references are
+// rewritten to require()-qualified accesses under Module: CommonJS.
+func TestCommonJSImports(t *testing.T) {
+	js, err := Module("import { add } from './m';\nexport const r = add(1, 2);\n",
+		Options{Module: core.ModuleKindCommonJS})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(js, `require("./m")`) || !strings.Contains(js, "m_1.add") {
+		t.Fatalf("import not lowered to require+qualified ref:\n%s", js)
 	}
 }
