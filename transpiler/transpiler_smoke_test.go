@@ -66,3 +66,19 @@ func TestEnums(t *testing.T) {
 		}
 	}
 }
+
+// TestSourceMap checks that ModuleWithSourceMap returns a v3 map naming the
+// original source, so a host can map generated positions back to TypeScript.
+func TestSourceMap(t *testing.T) {
+	js, m, err := ModuleWithSourceMap("const x: number = 1;\nthrow new Error('x');\n",
+		Options{FileName: "app.ts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(js, "throw new Error") {
+		t.Fatalf("unexpected js:\n%s", js)
+	}
+	if m == nil || m.Version != 3 || len(m.Sources) != 1 || m.Sources[0] != "app.ts" || m.Mappings == "" {
+		t.Fatalf("bad source map: %+v", m)
+	}
+}

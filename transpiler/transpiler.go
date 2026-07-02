@@ -12,6 +12,7 @@ import (
 	"github.com/iceisfun/typescript/core"
 	"github.com/iceisfun/typescript/parser"
 	"github.com/iceisfun/typescript/printer"
+	"github.com/iceisfun/typescript/sourcemap"
 	"github.com/iceisfun/typescript/transformers"
 	"github.com/iceisfun/typescript/transformers/estransforms"
 	"github.com/iceisfun/typescript/transformers/moduletransforms"
@@ -33,6 +34,18 @@ type Options struct {
 // lowering, ES downleveling to Target, and module-syntax transform) and returns
 // the emitted JavaScript text.
 func Module(src string, o Options) (string, error) {
+	js, _, err := transpile(src, o, false)
+	return js, err
+}
+
+// ModuleWithSourceMap is like Module but also returns a v3 source map relating
+// generated JavaScript positions back to the original TypeScript, so a host can
+// report .ts line/column for runtime errors that occur in the emitted code.
+func ModuleWithSourceMap(src string, o Options) (string, *sourcemap.RawSourceMap, error) {
+	return transpile(src, o, true)
+}
+
+func transpile(src string, o Options, withMap bool) (string, *sourcemap.RawSourceMap, error) {
 	if o.FileName == "" {
 		o.FileName = "/module.ts"
 	}
@@ -77,10 +90,26 @@ func Module(src string, o Options) (string, error) {
 	}
 
 	p := printer.NewPrinter(printer.PrinterOptions{
-		NewLine: options.NewLine,
-		Target:  options.Target,
+		NewLine:   options.NewLine,
+		Target:    options.Target,
+		SourceMap: withMap,
 	}, printer.PrintHandlers{}, emitContext)
-	return p.EmitSourceFile(sourceFile), nil
+
+	if !withMap {
+		return p.EmitSourceFile(sourceFile), nil, nil
+	}
+
+	// Drive the lower-level Write with a source-map generator: it writes the JS
+	// to the text writer and records generated->original position mappings.
+	gen := sourcemap.NewGenerator(
+		tspath.GetBaseFileName(o.FileName)+".js", // generated file name
+		"", // sourceRoot
+		"/", // sources directory
+		tspath.ComparePathsOptions{UseCaseSensitiveFileNames: true, CurrentDirectory: "/"},
+	)
+	writer := printer.NewTextWriter("\n", 0)
+	p.Write(sourceFile.AsNode(), sourceFile, writer, gen)
+	return writer.String(), gen.RawSourceMap(), nil
 }
 
 // scriptTransformers is the checker-free subset of the compiler's
