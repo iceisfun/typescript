@@ -54,6 +54,108 @@ func ModuleWithSourceMap(src string, o Options) (string, *sourcemap.RawSourceMap
 	return transpile(src, o, true)
 }
 
+// ModuleAST transpiles a single TypeScript module and returns the lowered
+// program as a JavaScript AST (github.com/iceisfun/typescript/ast) SourceFile
+// instead of emitted text, so an embedder can hand it directly to its own
+// compiler or VM without re-parsing generated JavaScript. It runs the same
+// isolatedModules pipeline as [Module] (type erasure, enum/namespace/
+// parameter-property lowering, ES downleveling to Target, and module-syntax
+// transform).
+//
+// The printer resolves some information lazily at emit time that never lives on
+// the nodes — auto-generated identifier names (temp variables, hoisted module/
+// enum/namespace aliases) and string-literal text a transform sourced from
+// another node. ModuleAST bakes those values into the tree, and parses and
+// prepends any required emit-helper definitions (e.g. __importStar) as leading
+// statements, so the returned SourceFile is a self-contained JavaScript program
+// that can be read structurally without the printer or an EmitContext.
+//
+// The returned SourceFile contains only JavaScript syntax: every TypeScript-only
+// node (type annotations, interfaces, type aliases, and the like) has been
+// removed by the transforms.
+func ModuleAST(src string, o Options) (*ast.SourceFile, error) {
+	if o.FileName == "" {
+		o.FileName = "/module.ts"
+	}
+	// ast.NewSourceFile requires a normalized, absolute file name.
+	o.FileName = tspath.NormalizePath(o.FileName)
+	if !tspath.IsRootedDiskPath(o.FileName) {
+		o.FileName = tspath.CombinePaths("/", o.FileName)
+	}
+	if o.Target == 0 {
+		o.Target = core.ScriptTargetESNext
+	}
+	if o.Module == 0 {
+		o.Module = core.ModuleKindESNext
+	}
+
+	options := &core.CompilerOptions{
+		Target:          o.Target,
+		Module:          o.Module,
+		IsolatedModules: core.TSTrue,
+	}
+
+	scriptKind := core.ScriptKindTS
+	if o.JSX {
+		scriptKind = core.ScriptKindTSX
+	}
+	parseOpts := ast.SourceFileParseOptions{
+		FileName: o.FileName,
+		Path:     tspath.Path(o.FileName),
+	}
+	sourceFile := parser.ParseSourceFile(parseOpts, src, scriptKind)
+	if !o.IgnoreSyntaxErrors {
+		if diags := sourceFile.Diagnostics(); len(diags) > 0 {
+			return nil, syntaxError(sourceFile, o.FileName, diags)
+		}
+	}
+	binder.BindSourceFile(sourceFile)
+
+	// Unlike Module, use a non-pooled emit context: the returned AST — its
+	// arena-allocated nodes — outlives this call, so it must not share the
+	// pooled context that Module borrows and returns for reuse.
+	emitContext := printer.NewEmitContext()
+	host := &emitHost{options: options, files: []*ast.SourceFile{sourceFile}, resolver: newEmitResolver()}
+	for _, tf := range scriptTransformers(emitContext, host, sourceFile) {
+		sourceFile = tf.TransformSourceFile(sourceFile)
+	}
+
+	p := printer.NewPrinter(printer.PrinterOptions{
+		NewLine: options.NewLine,
+		Target:  options.Target,
+	}, printer.PrintHandlers{}, emitContext)
+
+	prologue := p.BakeForAST(sourceFile)
+	if prologue != "" {
+		var err error
+		sourceFile, err = prependEmitHelpers(sourceFile, emitContext, prologue, o.FileName)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return sourceFile, nil
+}
+
+// prependEmitHelpers parses the emit-helper prologue (raw JavaScript such as the
+// __importStar / __importDefault definitions the printer would otherwise splice
+// in) and inserts its statements ahead of the module body, so the returned
+// SourceFile carries its own helper definitions.
+func prependEmitHelpers(sourceFile *ast.SourceFile, emitContext *printer.EmitContext, prologue, fileName string) (*ast.SourceFile, error) {
+	const helperFile = "/__emit_helpers.js"
+	hf := parser.ParseSourceFile(ast.SourceFileParseOptions{
+		FileName: helperFile,
+		Path:     tspath.Path(helperFile),
+	}, prologue, core.ScriptKindJS)
+	if diags := hf.Diagnostics(); len(diags) > 0 {
+		return nil, fmt.Errorf("%s: parsing emit helpers: %s", fileName, diags[0].String())
+	}
+	combined := make([]*ast.Node, 0, len(hf.Statements.Nodes)+len(sourceFile.Statements.Nodes))
+	combined = append(combined, hf.Statements.Nodes...)
+	combined = append(combined, sourceFile.Statements.Nodes...)
+	sourceFile.Statements = emitContext.Factory.AsNodeFactory().NewNodeList(combined)
+	return sourceFile, nil
+}
+
 func transpile(src string, o Options, withMap bool) (string, *sourcemap.RawSourceMap, error) {
 	if o.FileName == "" {
 		o.FileName = "/module.ts"

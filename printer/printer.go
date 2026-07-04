@@ -136,6 +136,7 @@ type Printer struct {
 	detachedCommentsInfo              core.Stack[detachedCommentsInfo]
 	commentsDisabled                  bool
 	inExtends                         bool // whether we are emitting the `extends` clause of a ConditionalTypeNode or InferTypeNode
+	bakeNames                         bool // when set, resolved auto-generated names / string sources are written back into node Text (see astexport.go)
 	nameGenerator                     NameGenerator
 	makeFileLevelOptimisticUniqueName func(string) string
 	commentStateArena                 core.Arena[commentState]
@@ -226,12 +227,20 @@ func (p *Printer) getLiteralTextOfNode(node *ast.LiteralLikeNode, sourceFile *as
 // `node` must be one of Identifier | PrivateIdentifier | LiteralExpression | JsxNamespacedName
 func (p *Printer) getTextOfNode(node *ast.Node, includeTrivia bool) string {
 	if ast.IsMemberName(node) && p.emitContext.autoGenerate[node] != nil {
-		return p.nameGenerator.GenerateName(node)
+		name := p.nameGenerator.GenerateName(node)
+		if p.bakeNames {
+			p.bakeText(node, name)
+		}
+		return name
 	}
 
 	if ast.IsStringLiteral(node) {
 		if textSourceNode := p.emitContext.textSource[node]; textSourceNode != nil {
-			return p.getTextOfNode(textSourceNode, includeTrivia)
+			text := p.getTextOfNode(textSourceNode, includeTrivia)
+			if p.bakeNames {
+				p.bakeText(node, text)
+			}
+			return text
 		}
 	}
 
